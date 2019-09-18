@@ -1,0 +1,721 @@
+---
+title: '"Data Story" on Song Lyrics'
+author: "Luyue Chen lc3363"
+output: html_document
+---
+
+![ ](/Users/luyue_chen/Documents/GitHub/fall2019-proj1--clycrystal/figs/pic5.jpeg)
+
+#### This report mainly focus on two questions: 1. What are the characteristics of lyrics of each kind of music? and 2. What are the emotion behind lyrics of each genre? The goal of this report is to look deeper into the patterns and characteristics of different types of song lyrics by Applying tools from natural language processing and text mining.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load libraries, warning=FALSE, message=FALSE,echo=FALSE}
+library(tidyverse)
+library(tidytext)
+library(plotly)
+library(DT)
+library(tm)
+library(data.table)
+library(scales)
+library(wordcloud)
+library(gridExtra)
+library(ngram)
+library(dplyr)
+library(janeaustenr)
+library(textdata)
+library(igraph)
+library(ggraph)
+library(wordcloud2)
+library(reshape2)
+```
+
+This report is prepared with the following environmental settings.
+
+```{r}
+print(R.version)
+```
+
+```{r load data, warning=FALSE, message=FALSE, echo=FALSE}
+load('/Users/luyue_chen/Documents/GitHub/fall2019-proj1--clycrystal/data/lyrics.RData') 
+```
+
+First, I process the raw textual data 'lyrics.RData' saved in $ data $ file by cleaning data, removing stopwords, blanks and creating a tidy version of texts which is saved in $ output $ file.
+
+```{r text processing in tm, warning=FALSE, message=FALSE, echo=FALSE}
+leadingWhitespace <- content_transformer(function(x) str_trim(x, side = "both"))
+data("stop_words")
+word <- c("lot", "today", "months", "month", "wanna", "wouldnt", "wasnt", "ha","ah","uh", "na", "ooh", "da", "gonna", "im", "dont", "aint", "wont", "yeah","ya","yu", "la", "oi", "nigga","niggas","fuck", "hey", "year", "years", "last", "past", "feel","chorus","repeat")
+stop_words <- c(stop_words$word, word)
+
+corpus <- VCorpus(VectorSource(dt_lyrics$lyrics))%>%
+  tm_map(content_transformer(tolower))%>%
+  tm_map(removePunctuation)%>%
+  tm_map(removeWords, character(0))%>%
+  tm_map(removeWords, stop_words)%>%
+  tm_map(removeNumbers)%>%
+  tm_map(stripWhitespace)%>%
+  tm_map(leadingWhitespace)
+```
+
+```{r stemming, warning=FALSE, message=FALSE,echo=FALSE}
+stemmed <- tm_map(corpus, stemDocument) %>%
+  tidy() %>%
+  select(text)
+```
+
+```{r tidy dictionary,warning=FALSE, message=FALSE,echo=FALSE}
+dict <- tidy(corpus) %>%
+  select(text) %>%
+  unnest_tokens(dictionary, text)
+```
+
+```{r tidy stems with dictionary, warning=FALSE, message=FALSE, echo=FALSE}
+completed <- stemmed %>%
+  mutate(id = row_number()) %>%
+  unnest_tokens(stems, text) %>%
+  bind_cols(dict) 
+```
+
+```{r stem completion, warning=FALSE, message=FALSE, echo=FALSE}
+completed <- completed %>%
+  group_by(stems) %>%
+  count(dictionary) %>%
+  mutate(word = dictionary[which.max(n)]) %>%
+  ungroup() %>%
+  select(stems, word) %>%
+  distinct() %>%
+  right_join(completed) %>%
+  select(-stems)
+```
+
+```{r reverse unnest, warning=FALSE, message=FALSE, echo=FALSE}
+completed <- completed %>%
+  group_by(id) %>%
+  summarise(stemmedwords= str_c(word, collapse = " ")) %>%
+  ungroup()
+```
+
+```{r cleaned hm_data, warning=FALSE, message=FALSE, echo=FALSE}
+dt_lyrics <- dt_lyrics %>%
+  mutate(id = row_number()) %>%
+  inner_join(completed)
+```
+
+```{r export data, echo=FALSE}
+save(dt_lyrics, file="/Users/luyue_chen/Documents/GitHub/fall2019-proj1--clycrystal/output/processed_lyrics.RData")
+```
+
+```{r,echo=FALSE}
+load('/Users/luyue_chen/Documents/GitHub/fall2019-proj1--clycrystal/output/processed_lyrics.RData') 
+```
+
+## What are the characteristics of lyrics of each kind of music?
+
+When we listen to music, we not only feel the beauty of the melody, but also find resonance from the lyrics. The style of lyrics often corresponds to features of different types of music. So What are the characteristics of lyrics of each kind of music? Do different types of music share something in common on their lyrics? And what's the difference?
+
+So I try to explore these questions by comparing the most frequently used words and bigrams of different types of song lyrics. I hope that I can picture some topics from each genre's song lyrics.  
+
+First I look at the overall style from all song lyrics.
+
+## All genres
+```{r, message=FALSE, echo=FALSE}
+corpus <- VCorpus((VectorSource(dt_lyrics$stemmedwords)))
+dtm <- DocumentTermMatrix(corpus,control = list(bounds=list(global=c(5,Inf)),removeNumbers=T,
+                                                weighting=weightTf))
+all_tidy = tidy(dtm)
+overall <- summarise(group_by(all_tidy, term), n=sum(count))
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud2(overall[overall$n>13200,],size=1,minRotation = -pi/6,maxRotation = pi/6,rotateRatio = 0.4,shape = 'star')
+```
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+bigrams <- tidy(corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+
+bigrams_c <- bigrams%>%
+  count(bigram, sort=T)
+
+bigrams_c_sep <- separate(bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+bigram_graph <- bigrams_c_sep %>%
+  filter(n>1000) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+Overall, the most frequently used words are "love", "time", "baby","heart","ill". By looking into the network of bigrams, we can visualize some details of the text structure, the darker the arrow, the higher the frequency of the connection between the two words. Here for all the song lyrics, we can see "heart", "love", "baby" form common centers of nodes, and "love baby", "fall love", "close eyes", "heart beat/broken" appear most often in pairs.
+
+This shows that the lyrics generally lean towards the theme of love, whether sweet or sad.
+
+Let's go deep into each type of music to explore the lyric features.
+
+## Rock
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+rock_lyrics <- dt_lyrics[dt_lyrics$genre=="Rock",]
+rock_corpus <- VCorpus(VectorSource(rock_lyrics$stemmedwords))
+rock_dtm<-TermDocumentMatrix(rock_corpus)
+rock_tidy=tidy(rock_dtm)
+rock_overall=summarise(group_by(rock_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(rock_overall$term, rock_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"PuOr"))
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+rock_bigrams <- tidy(rock_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+
+rock_bigrams_c <- rock_bigrams%>%
+  count(bigram, sort=T)
+
+rock_bigrams_c_sep <- separate(rock_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+rock_bigram_graph <- rock_bigrams_c_sep %>%
+  filter(n>500) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(rock_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+For Rock music, "love", "time", "ill", "baby", "day" are most commonly used words. From the bigrams network, besides love-related pairs, we can see the iconic word "rock roll" in the top five. It's also worth noting that bigrams like "love love", "time time", "baby baby", "day day", "run run", "dance dance" appear most often, I think that's because these elements can express the strong rhythm of Rock music.
+
+## Pop
+```{r, message=FALSE,echo=FALSE}
+pop_lyrics <- dt_lyrics[dt_lyrics$genre=="Pop",]
+pop_corpus <- VCorpus(VectorSource(pop_lyrics$stemmedwords))
+pop_dtm<-TermDocumentMatrix(pop_corpus)
+
+pop_tidy=tidy(pop_dtm)
+
+pop_overall=summarise(group_by(pop_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(pop_overall$term, pop_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"PiYG"))
+```
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+pop_bigrams <- tidy(pop_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+
+pop_bigrams_c <- pop_bigrams%>%
+  count(bigram, sort=T)
+
+pop_bigrams_c_sep <- separate(pop_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+pop_bigram_graph <- pop_bigrams_c_sep %>%
+  filter(n>400) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(pop_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+For Pop music, I think it's the most love-related genres. Because we can see "love baby", "fall love" appear most frequently, maybe that's why we usually hear pop music in the wedding.
+
+## Metal
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+metal_lyrics <- dt_lyrics[dt_lyrics$genre=="Metal",]
+metal_corpus <- VCorpus(VectorSource(metal_lyrics$stemmedwords))
+metal_dtm<-TermDocumentMatrix(metal_corpus)
+
+metal_tidy=tidy(metal_dtm)
+
+metal_overall=summarise(group_by(metal_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(metal_overall$term, metal_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"BuGn"))
+```
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+metal_bigrams <- tidy(metal_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+metal_bigrams_c <- metal_bigrams%>%
+  count(bigram, sort=T)
+
+metal_bigrams_c_sep <- separate(metal_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+metal_bigram_graph <- metal_bigrams_c_sep %>%
+  filter(n>100) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(metal_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+For Metal, "time", "life", "die", "eyes", "world" become most common in lyrics, the most common pairs like "close eyes", "live life", "set free", "deep inside", "fire burn" seem to express a sense of freedom and power, which exactly coincides with the emphatic rhythm of Metal music.
+
+## Hip-Hop
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+hipp_lyrics <- dt_lyrics[dt_lyrics$genre=="Hip-Hop",]
+hipp_corpus <- VCorpus(VectorSource(hipp_lyrics$stemmedwords))
+hipp_dtm<-TermDocumentMatrix(hipp_corpus)
+
+hipp_tidy=tidy(hipp_dtm)
+
+hipp_overall=summarise(group_by(hipp_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(hipp_overall$term, hipp_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"PuRd"))
+```
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+hipp_bigrams <- tidy(hipp_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+hipp_bigrams_c <- hipp_bigrams%>%
+  count(bigram, sort=T)
+hipp_bigrams_c_sep <- separate(hipp_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+hipp_bigram_graph <- hipp_bigrams_c_sep %>%
+  filter(n>250) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(hipp_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+For Hip-Hop, the lyrics become more like street freestyle, since besides "love", "time", "girl", "baby", even dirty words like "shit", "bitch", "ass" become very commonly used. Also from the bigrams network, "love love", "yo yo", "baby baby", "boom boom", "bang bang"???those words reflect the features of rap, a rhythmic and rhyming speech that is chanted.
+
+## Country
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+ctry_lyrics <- dt_lyrics[dt_lyrics$genre=="Country",]
+ctry_corpus <- VCorpus(VectorSource(ctry_lyrics$stemmedwords))
+ctry_dtm<-TermDocumentMatrix(ctry_corpus)
+ctry_tidy=tidy(ctry_dtm)
+ctry_overall=summarise(group_by(ctry_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(ctry_overall$term, ctry_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Set1"))
+```
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+ctry_bigrams <- tidy(ctry_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+ctry_bigrams_c <- ctry_bigrams%>%
+  count(bigram, sort=T)
+ctry_bigrams_c_sep <- separate(ctry_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+ctry_bigram_graph <- ctry_bigrams_c_sep %>%
+  filter(n>100) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(ctry_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+For Country, "love" appears way more frequently than any other word, also from the above bigrams network, the lyrics particularly focus around "love" and "heart", pairs like "true love", "fall love", "ill love", "sweet love", "break heart" always occur in lyrics of Country music, which shows that it usually create songs with themes such as sweetness of love, the pain of losing love, the expectation for the warm life etc.
+
+## Jazz
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+jazz_lyrics <- dt_lyrics[dt_lyrics$genre=="Jazz",]
+jazz_corpus <- VCorpus(VectorSource(jazz_lyrics$stemmedwords))
+jazz_dtm<-TermDocumentMatrix(jazz_corpus)
+jazz_tidy=tidy(jazz_dtm)
+jazz_overall=summarise(group_by(jazz_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(jazz_overall$term, jazz_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Set3"))
+```
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+jazz_bigrams <- tidy(jazz_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+jazz_bigrams_c <- jazz_bigrams%>%
+  count(bigram, sort=T)
+jazz_bigrams_c_sep <- separate(jazz_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+jazz_bigram_graph <- jazz_bigrams_c_sep %>%
+  filter(n>70) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(jazz_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+As for Jazz, I think the lyric features are very similar to Country music, although they play with a totally different styles, Jazz tends to be blue while country music is more cheerful.
+
+## Electronic
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+elec_lyrics <- dt_lyrics[dt_lyrics$genre=="Electronic",]
+elec_corpus <- VCorpus(VectorSource(elec_lyrics$stemmedwords))
+elec_dtm<-TermDocumentMatrix(elec_corpus)
+elec_tidy=tidy(elec_dtm)
+elec_overall=summarise(group_by(elec_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(elec_overall$term, elec_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"RdYlGn"))
+```
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+elec_bigrams <- tidy(elec_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+elec_bigrams_c <- elec_bigrams%>%
+  count(bigram, sort=T)
+elec_bigrams_c_sep <- separate(elec_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+elec_bigram_graph <- elec_bigrams_c_sep %>%
+  filter(n>70) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(elec_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+For Electronic, although love is still the most frequently used word, from the bigrams network above, it's no longer the common center of node, instead, wo can see "air somethings", "funk soul", "soul brother" mostly appear.
+
+## R&B
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+rb_lyrics <- dt_lyrics[dt_lyrics$genre=="R&B",]
+rb_corpus <- VCorpus(VectorSource(rb_lyrics$stemmedwords))
+rb_dtm<-TermDocumentMatrix(rb_corpus)
+rb_tidy=tidy(rb_dtm)
+rb_overall=summarise(group_by(rb_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(rb_overall$term, rb_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"BrBG"))
+```
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+rb_bigrams <- tidy(rb_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+rb_bigrams_c <- rb_bigrams%>%
+  count(bigram, sort=T)
+rb_bigrams_c_sep <- separate(rb_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+rb_bigram_graph <- rb_bigrams_c_sep %>%
+  filter(n>50) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(rb_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+The lyric features of R&B also seem to focus aroud "love".
+
+## Indie
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+ind_lyrics <- dt_lyrics[dt_lyrics$genre=="Indie",]
+ind_corpus <- VCorpus(VectorSource(ind_lyrics$stemmedwords))
+ind_dtm<-TermDocumentMatrix(ind_corpus)
+ind_tidy=tidy(ind_dtm)
+ind_overall=summarise(group_by(ind_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(ind_overall$term, ind_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"PuBu"))
+```
+
+
+```{r,warning=FALSE, message=FALSE,echo=FALSE}
+ind_bigrams <- tidy(ind_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+ind_bigrams_c <- ind_bigrams%>%
+  count(bigram, sort=T)
+
+ind_bigrams_c_sep <- separate(ind_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+ind_bigram_graph <- ind_bigrams_c_sep %>%
+  filter(n>25) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(ind_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+As for Indie, "love" and "home" seem to be two main themes.
+
+## Folk
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+folk_lyrics <- dt_lyrics[dt_lyrics$genre=="Folk",]
+folk_corpus <- VCorpus(VectorSource(folk_lyrics$stemmedwords))
+folk_dtm<-TermDocumentMatrix(folk_corpus)
+folk_tidy=tidy(folk_dtm)
+folk_overall=summarise(group_by(folk_tidy, term), n=sum(count)) 
+```
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+wordcloud(folk_overall$term, folk_overall$n,
+          scale=c(4.5,0.5),
+          max.words=100,
+          min.freq=1,
+          random.order=FALSE,
+          rot.per=0.3,
+          use.r.layout=T,
+          random.color=FALSE,
+          colors=brewer.pal(9,"Paired"))
+```
+
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+folk_bigrams <- tidy(folk_corpus) %>%
+  select(text) %>%
+  unnest_tokens(bigram,text,token="ngrams",n=2)
+folk_bigrams_c <- folk_bigrams%>%
+  count(bigram, sort=T)
+folk_bigrams_c_sep <- separate(folk_bigrams_c,bigram,c("word1","word2"),sep=" ",remove=T)
+folk_bigram_graph <- folk_bigrams_c_sep %>%
+  filter(n>18) %>%
+  graph_from_data_frame()
+
+a <- grid::arrow(type="closed",length=unit(.1,"inches"))
+
+ggraph(folk_bigram_graph, layout="fr") +
+  geom_edge_link(aes(edge_alpha= n),show.legend = F,
+                 arrow= a, end_cap=circle(.07,'inches')) +
+  geom_node_point(color="lightblue",size=3) +
+  geom_node_text(aes(label=name), vjust=1, hjust=1)+
+  theme_void()
+```
+
+As for Folk, bigrams like "dee dee", "dog food", "dear goofy", "wack fall", "fat road" seem to form a kind of storytelling lyric.
+
+![ ](/Users/luyue_chen/Documents/GitHub/fall2019-proj1--clycrystal/figs/pic1.jpeg)
+
+#### In conclusion, from the lyrics textmining analysis of all genres, we can form a overview of the characteristics of each type pf song lyrics. First they all focus around a timeless theme - love. What's more, some of those genres share some common features, for example, for Rock and Electronic, besides love lyrics also address themes like soul, free and world. Folk music and country music sound a lot alike, so you can recognize the same storytelling lyrics as you move from one genre to the next, we all know that R&B music combined styles from Jazz and Blues when it started, therefore, it is not difficult to see that the lyrics of R&B and Jazz are very similar, mainly with love as the theme.
+
+
+## What are the emotion behind lyrics of each genre?
+
+Next, I conduct sentiment analysis of each genres of music, to see the emotion in the lyrics of each music genre.
+
+Here I use `AFINN` and `bing` as my lexicon, the first one assigns words with a score that runs between -5 and 5, with negative scores indicating negative sentiment and positive scores indicating positive sentiment and I use it to calculate the total score of each genre's sentiment, the `bing` lexicon categorizes words in a binary fashion into positive and negative categories, and I use it as a tool to label each word in lyrics. 
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+info <- dt_lyrics[,c('id','year','genre')]
+colnames(info) <- c("document","year","genre")
+
+all_tidy$document <- as.integer(all_tidy$document)
+all_tidy <- all_tidy %>%
+  inner_join(info,by='document')
+colnames(all_tidy) <- c('document','word','n','year','genre')
+
+genre_sentiment <- all_tidy %>%
+  inner_join(get_sentiments('bing')) %>%
+  count(genre,sentiment) %>%
+  spread(sentiment,n,fill=0) %>%
+  mutate(sentiment=positive-negative)
+rank_senti_genre <- arrange(genre_sentiment,sentiment)
+
+all_sentiment <- all_tidy %>%
+  inner_join(get_sentiments('bing')) %>%
+  count(document,sentiment) %>%
+  spread(sentiment,n,fill=0) %>%
+  mutate(sentiment=positive-negative) %>%
+  inner_join(info,by='document')
+
+all_tidy %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort=TRUE) %>%
+  acast(word~sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray20", "gray80"), max.words=100)
+```
+
+From the above wordcloud, the size of a word's text is in proportion to its frequency within its sentiment. We can see the most important positive words are "love", "smile", "free", "shine","sweet", while most common negative words are "die", "lie", "fall","break", "cry" etc.
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+genre_sentiment1 <- all_tidy %>%
+  inner_join(get_sentiments('afinn')) 
+rank_senti_genre1 <- arrange(summarise(group_by(genre_sentiment1,genre),sentiment=sum(value)),sentiment)
+
+all_sentiment1 <- summarise(group_by(genre_sentiment1,document),sentiment=sum(value)) %>%
+  inner_join(info,by='document')
+
+a <- rank_senti_genre1[!(rank_senti_genre1$genre %in% c("Other","Not Available")),]
+
+data.frame(a)%>%
+      mutate(genre=reorder(genre,sentiment)) %>%
+      ggplot(aes(genre,sentiment)) +
+      geom_col(fill=4) +
+      labs(title = "Rank of Sentiment score in Lyrics for All Genres")+
+      xlab(NULL) +
+      ylab("score")+
+      coord_flip()
+
+```
+
+From the above rank of the sentiment score, lyrics of Rock, Hip-Hop and Metal convey the most negative emotion, while lyrics of Jazz, Country, Folk tend to have much more positive emotion.
+
+```{r, warning=FALSE, message=FALSE,echo=FALSE}
+par(mfrow=c(5,2),mar=c(0.5,0.5,0.5,0.5))
+  
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="Rock",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of Rock Music', border="black", col='skyblue',breaks = 50)
+
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="Hip-Hop",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of Hip-Hop Music', border="black", col='skyblue',breaks = 50)
+
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="Metal",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of Metal Music', border="black", col='skyblue',breaks = 50)
+
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="Pop",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of Pop Music', border="black", col='skyblue',breaks = 50)
+
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="Electronic",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of Electronic Music', border="black", col='skyblue',breaks = 50)
+
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="Indie",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of Indie Music', border="black", col='skyblue',breaks = 50)
+
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="R&B",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of R&B Music', border="black", col='skyblue',breaks = 50)
+
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="Folk",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of Folk Music', border="black", col='skyblue',breaks = 30)
+
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="Country",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of Country Music', border="black", col='skyblue',breaks = 50)
+
+hist(as.numeric(unlist(all_sentiment1[all_sentiment1$genre=="Jazz",'sentiment'])),xlim=c(-60,60),xlab='',main='Sentiment of Jazz Music', border="black", col='skyblue',breaks = 50)
+
+```
+
+We can also see from those histograms that the distribution of sentiment scores of Rock, Hip-Hop, Metal skew to the right significantly, while the sentiment of Jazz, Country are slightly positive.
+
+![ ](/Users/luyue_chen/Documents/GitHub/fall2019-proj1--clycrystal/figs/pic4.jpeg)
+
+#### In short, when we are in a good mood, I suggest you listen to Country and Jazz music. When we are in a bad mood, Rock, Hip-Hop and Metal are good choices, because listening to this kind of music can let us vent our emotions. Of course, Pop, Electronic, Indie, Folk, R&B all have their own styles. Although their overall mood is slightly negative in terms of lyrics, there are still many songs with diverse styles, which deserve our appreciation.
+
